@@ -1,0 +1,14 @@
+# servers抄袭了 ServerJoiner
+group:
+  bw:
+    - bw44
+    - bwdul
+
+servers:
+  bw44: # regex
+    - |-
+      State: [1-2]
+      Map: .*
+  bwdul:
+    - |-
+      already

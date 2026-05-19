@@ -1,0 +1,11 @@
+name: AerJoiner
+main: com.aermini.AerJoiner
+version: 1.0.0
+author: AerMini
+depend: [TitleAPI]
+commands:
+  aerjoiner:
+    usage: /<command> [quick|reload|list] [args]
+    aliases: [aj]
+  join:
+    usage: /<command> [category]
