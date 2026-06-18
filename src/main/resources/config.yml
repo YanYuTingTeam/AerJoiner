@@ -26,3 +26,8 @@ redis:
   pool-config:
     max-idle: 5
     min-idle: 1
+  # 实时状态更新通道 — 游戏服将状态变更推送到此通道，大厅订阅后秒级更新
+  # 所有小游戏服插件都应往这个通道发消息，格式见下方说明
+  # UPDATE,{ip}:{port},{arenaName},{playerCount},{maxPlayers},{state}
+  # REMOVE,{ip}:{port},{arenaName}
+  state-channel: "aerjoiner:state"

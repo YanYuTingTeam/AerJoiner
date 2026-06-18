@@ -162,7 +162,7 @@ public class JoinLogic {
     }
 
     private static void startRedisTeleportProcess(AerJoiner plugin, Player player, String categoryName,
-                                                   ServerData targetGame, CategoryData category) {
+                                                  ServerData targetGame, CategoryData category) {
         TeleportLockManager.TeleportLockState lockState = plugin.getTeleportLockManager().getTeleportState(player);
         int maxRetries = plugin.getConfig().getInt("teleport_max_retries", 3);
         int maxServers = plugin.getConfig().getInt("teleport_max_servers", 3);
@@ -175,10 +175,8 @@ public class JoinLogic {
             return;
         }
 
-        String bungeeName = plugin.getServerManager().getBungeeNameByAddress(targetGame.getServerAddress());
-        if (bungeeName == null) {
-            bungeeName = targetGame.getServerAddress().split(":")[0] + ":" + targetGame.getServerAddress().split(":")[1];
-        }
+        String resolved = plugin.getServerManager().getBungeeNameByAddress(targetGame.getServerAddress());
+        final String bungeeName = resolved != null ? resolved : targetGame.getServerAddress();
 
         redisManager.publishJoin(player.getName(), targetGame.getRedisMode(),
                 targetGame.getArenaName(), targetGame.getServerAddress(), category.getRedisChannel());

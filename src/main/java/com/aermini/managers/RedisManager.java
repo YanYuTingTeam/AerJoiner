@@ -1,22 +1,33 @@
 package com.aermini.managers;
 
 import com.aermini.AerJoiner;
+import org.bukkit.Bukkit;
 import org.bukkit.configuration.ConfigurationSection;
 import redis.clients.jedis.Jedis;
 import redis.clients.jedis.JedisPool;
 import redis.clients.jedis.JedisPoolConfig;
+import redis.clients.jedis.JedisPubSub;
 import redis.clients.jedis.ScanParams;
 import redis.clients.jedis.ScanResult;
 
 import java.util.ArrayList;
 import java.util.List;
 import java.util.Map;
+import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.regex.Pattern;
 
 public class RedisManager {
 
     private final JedisPool pool;
     private final AerJoiner plugin;
+    private final String stateChannel;
+
+    private volatile JedisPubSub stateSubscriber;
+    private volatile Thread stateSubscriberThread;
+    private final AtomicBoolean running = new AtomicBoolean(true);
+
+    private static final long RECONNECT_DELAY_SECONDS = 5;
+    private static final int MAX_RECONNECT_ATTEMPTS = 10;
 
     public RedisManager(AerJoiner plugin) {
         this.plugin = plugin;
@@ -46,8 +57,84 @@ public class RedisManager {
         } else {
             this.pool = new JedisPool(config, host, port, timeoutMs, password);
         }
+
+        this.stateChannel = section.getString("state-channel", "aerjoiner:state");
+
         plugin.getLogger().info("RedisManager > 已初始化 - host: " + host + ", port: " + port);
+        plugin.getLogger().info("RedisManager > 状态订阅通道: " + stateChannel);
+
+        startStateSubscriber();
     }
+
+    // ==================== Pub/Sub 状态订阅（接收游戏服的实时更新） ====================
+
+    private void startStateSubscriber() {
+        if (stateSubscriberThread != null && stateSubscriberThread.isAlive()) {
+            plugin.getLogger().info("RedisManager > 状态订阅器已在运行，跳过启动");
+            return;
+        }
+
+        this.stateSubscriber = new JedisPubSub() {
+            @Override
+            public void onMessage(String channel, String message) {
+                if (!stateChannel.equals(channel)) return;
+                try {
+                    Bukkit.getScheduler().runTask(plugin, () -> {
+                        plugin.getServerManager().handleStateUpdate(message);
+                    });
+                } catch (Exception e) {
+                    plugin.getLogger().warning("RedisManager > 处理状态更新异常: " + e.getMessage());
+                }
+            }
+
+            @Override
+            public void onSubscribe(String channel, int subscribedChannels) {
+                plugin.getLogger().info("RedisManager > 已订阅状态通道: " + channel
+                        + " (共 " + subscribedChannels + " 个频道)");
+            }
+
+            @Override
+            public void onUnsubscribe(String channel, int subscribedChannels) {
+                plugin.getLogger().info("RedisManager > 已取消订阅状态通道: " + channel);
+            }
+        };
+
+        this.stateSubscriberThread = new Thread(this::runStateSubscriptionLoop, "AerJoinerStateSubscriber");
+        stateSubscriberThread.setDaemon(true);
+        stateSubscriberThread.start();
+    }
+
+    private void runStateSubscriptionLoop() {
+        int attempt = 0;
+        while (running.get()) {
+            try (Jedis jedis = pool.getResource()) {
+                plugin.getLogger().info("RedisManager > 开始监听状态通道: " + stateChannel);
+                jedis.subscribe(stateSubscriber, stateChannel);
+                break;
+            } catch (Exception e) {
+                attempt++;
+                if (!running.get()) break;
+
+                plugin.getLogger().warning("RedisManager > 状态订阅断开 (第 " + attempt
+                        + "/" + MAX_RECONNECT_ATTEMPTS + " 次): " + e.getMessage());
+
+                if (attempt >= MAX_RECONNECT_ATTEMPTS) {
+                    plugin.getLogger().severe("RedisManager > 状态订阅达到最大重连次数，放弃重连");
+                    break;
+                }
+
+                try {
+                    Thread.sleep(RECONNECT_DELAY_SECONDS * 1000);
+                } catch (InterruptedException ie) {
+                    Thread.currentThread().interrupt();
+                    break;
+                }
+            }
+        }
+        plugin.getLogger().info("RedisManager > 状态订阅线程已退出");
+    }
+
+    // ==================== SCAN（全量发现） ====================
 
     public List<ServerData> scanGames(String keyPrefix, List<String> modes,
                                        List<Pattern> serverFilter, List<Pattern> arenaExclude) {
@@ -108,6 +195,8 @@ public class RedisManager {
         return games;
     }
 
+    // ==================== PUBLISH（通知游戏服有玩家要来） ====================
+
     public void publishJoin(String playerName, String mode, String arenaName,
                             String serverAddress, String channel) {
         try (Jedis jedis = pool.getResource()) {
@@ -118,7 +207,27 @@ public class RedisManager {
         }
     }
 
+    // ==================== 关闭 ====================
+
     public void shutdown() {
+        running.set(false);
+
+        if (stateSubscriber != null && stateSubscriber.isSubscribed()) {
+            try {
+                stateSubscriber.unsubscribe();
+            } catch (Exception e) {
+                plugin.getLogger().warning("RedisManager > 取消状态订阅失败: " + e.getMessage());
+            }
+        }
+        if (stateSubscriberThread != null) {
+            stateSubscriberThread.interrupt();
+            try {
+                stateSubscriberThread.join(3000);
+            } catch (InterruptedException e) {
+                Thread.currentThread().interrupt();
+            }
+        }
+
         if (pool != null && !pool.isClosed()) {
             pool.close();
             plugin.getLogger().info("RedisManager > 已关闭");

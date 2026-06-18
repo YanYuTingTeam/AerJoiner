@@ -28,6 +28,14 @@
 #       - "192.168.1.*"
 #     arena-exclude:             # 排除特定地图（可选，支持 * 通配符）
 #       - "TestMap"
+#
+# ======= 实时状态同步说明 =======
+# AerJoiner 会自动订阅 config.yml 中 redis.state-channel（默认 aerjoiner:state）
+# 游戏服在状态变化时往该通道推送消息，AerJoiner 秒级更新本地缓存
+# 定时 SCAN 仍会运行作为兜底，防止订阅断连丢失消息
+# 消息格式:
+#   UPDATE,{ip}:{port},{arenaName},{playerCount},{maxPlayers},{state}
+#   REMOVE,{ip}:{port},{arenaName}
 
 group:
   bw:

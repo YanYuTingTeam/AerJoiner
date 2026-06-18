@@ -1,7 +1,7 @@
 package com.aermini.managers;
 
 public class ServerData {
-    private final String name;
+    private String name;
     private final String displayName;
     private final String ip;
     private volatile int playerCount = 0;
@@ -19,6 +19,7 @@ public class ServerData {
     }
 
     public String getName() { return name; }
+    public void setName(String name) { this.name = name; }
     public String getDisplayName() { return displayName; }
     public String getIp() { return ip; }
     public int getPlayerCount() { return playerCount; }

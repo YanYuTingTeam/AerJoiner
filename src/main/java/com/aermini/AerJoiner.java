@@ -24,18 +24,6 @@ public class AerJoiner extends JavaPlugin implements PluginMessageListener {
     private AerPartyManager aerPartyManager;
     private RedisManager redisManager;
 
-    static {
-        try {
-            System.setProperty("logback.configurationFile", "/dev/null");
-            System.setProperty("logback.disable", "true");
-            System.setProperty("logback.statusListenerClass", "com.aermini.libs.logback.core.status.NopStatusListener");
-            System.setProperty("logback.ContextSelector", "com.aermini.libs.logback.classic.selector.ContextSelectorStaticBinder");
-            System.setProperty("slf4j.internal.nop", "true");
-            Class.forName("org.slf4j.LoggerFactory");
-        } catch (Exception e) {
-        }
-    }
-
     @Override
     public void onEnable() {
         instance = this;

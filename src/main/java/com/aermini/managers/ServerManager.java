@@ -291,4 +291,65 @@ public class ServerManager {
     }
 
     public Collection<CategoryData> getCategories() { return categories.values(); }
+
+    // ==================== 实时状态更新（来自 Pub/Sub） ====================
+
+    /**
+     * 处理游戏服推送的实时状态变更
+     * 消息格式:
+     *   UPDATE,{ip}:{port},{arenaName},{playerCount},{maxPlayers},{state}
+     *   REMOVE,{ip}:{port},{arenaName}
+     */
+    public void handleStateUpdate(String message) {
+        try {
+            String[] parts = message.split(",", -1);
+            if (parts.length < 3) return;
+
+            String action = parts[0].trim();
+            String serverAddress = parts[1].trim();
+            String arenaName = parts[2].trim();
+
+            if ("UPDATE".equals(action) && parts.length >= 6) {
+                int playerCount = Integer.parseInt(parts[3].trim());
+                int maxPlayers = Integer.parseInt(parts[4].trim());
+                String state = parts[5].trim();
+
+                ServerData existing = servers.get(arenaName);
+                if (existing != null) {
+                    existing.setPlayerCount(playerCount);
+                    existing.setMaxPlayers(maxPlayers);
+                    existing.setState(state);
+                } else {
+                    // SCAN 还没发现这个房间，提前创建（下一轮 SCAN 会补充 bungeeName 等）
+                    ServerData gameData = new ServerData(arenaName, arenaName, serverAddress);
+                    gameData.setPlayerCount(playerCount);
+                    gameData.setMaxPlayers(maxPlayers);
+                    gameData.setState(state);
+                    gameData.setArenaName(arenaName);
+                    gameData.setServerAddress(serverAddress);
+                    servers.put(arenaName, gameData);
+
+                    // 同时加入对应 redis 分组的 serverNames
+                    String bungeeName = bungeeAddressToName.get(serverAddress);
+                    if (bungeeName != null) gameData.setName(bungeeName);
+                    for (CategoryData category : categories.values()) {
+                        if ("redis".equals(category.getMethod())) {
+                            category.getServerNames().add(arenaName);
+                        }
+                    }
+                }
+            } else if ("REMOVE".equals(action)) {
+                ServerData removed = servers.remove(arenaName);
+                if (removed != null) {
+                    for (CategoryData category : categories.values()) {
+                        if ("redis".equals(category.getMethod())) {
+                            category.getServerNames().remove(arenaName);
+                        }
+                    }
+                }
+            }
+        } catch (Exception e) {
+            plugin.getLogger().warning("ServerManager > 处理状态更新失败: " + message + " - " + e.getMessage());
+        }
+    }
 }
