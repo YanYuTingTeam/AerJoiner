@@ -27,18 +27,20 @@
             <groupId>org.spigotmc</groupId>
             <artifactId>spigot-api</artifactId>
             <version>1.8.8-R0.1-SNAPSHOT</version>
-            <scope>system</scope>
-            <systemPath>${project.basedir}/libs/spigot-api-1.8.8-R0.1-SNAPSHOT.jar</systemPath>
+            <scope>provided</scope>
+            <exclusions>
+                <exclusion>
+                    <groupId>net.md-5</groupId>
+                    <artifactId>bungeecord-chat</artifactId>
+                </exclusion>
+            </exclusions>
         </dependency>
-
         <dependency>
-            <groupId>com.destroystokyo.paper</groupId>
-            <artifactId>paper-api</artifactId>
-            <version>1.8.9-R0.1-SNAPSHOT</version>
-            <scope>system</scope>
-            <systemPath>${project.basedir}/libs/paper-api-1.8.9-R0.1-20200402.185321-110.jar</systemPath>
+            <groupId>net.md-5</groupId>
+            <artifactId>bungeecord-chat</artifactId>
+            <version>1.20-R0.2</version>
+            <scope>provided</scope>
         </dependency>
-        
         <dependency>
             <groupId>com.connorlinfoot</groupId>
             <artifactId>TitleAPI</artifactId>
@@ -46,44 +48,18 @@
             <scope>system</scope>
             <systemPath>${project.basedir}/libs/TitleAPI-1.5.3.jar</systemPath>
         </dependency>
-
         <dependency>
             <groupId>me.clip</groupId>
             <artifactId>placeholderapi</artifactId>
             <version>2.11.6</version>
             <scope>system</scope>
-            <!-- provided -->
             <systemPath>${project.basedir}/libs/PlaceholderAPI-2.11.6.jar</systemPath>
         </dependency>
 
         <dependency>
-            <groupId>br.com.azalim</groupId>
-            <artifactId>mcserverping</artifactId>
-            <version>1.0.9</version>
-            <exclusions>
-                <exclusion>
-                    <groupId>net.md-5</groupId>
-                    <artifactId>bungeecord-api</artifactId>
-                </exclusion>
-            </exclusions>
-            <scope>system</scope>
-            <systemPath>${project.basedir}/libs/mcserverping-1.0.9.jar</systemPath>
-        </dependency>
-
-        <dependency>
-            <groupId>org.slf4j</groupId>
-            <artifactId>slf4j-api</artifactId>
-            <version>1.7.36</version>
-        </dependency>
-        <dependency>
-            <groupId>ch.qos.logback</groupId>
-            <artifactId>logback-classic</artifactId>
-            <version>1.2.13</version>
-        </dependency>
-        <dependency>
-            <groupId>ch.qos.logback</groupId>
-            <artifactId>logback-core</artifactId>
-            <version>1.2.13</version>
+            <groupId>redis.clients</groupId>
+            <artifactId>jedis</artifactId>
+            <version>3.9.0</version>
         </dependency>
     </dependencies>
 
@@ -101,34 +77,14 @@
                         </goals>
                         <configuration>
                             <createDependencyReducedPom>false</createDependencyReducedPom>
-                            <filters>
-                                <filter>
-                                    <artifact>br.com.azalim:mcserverping</artifact>
-                                    <excludes>
-                                        <exclude>logback.xml</exclude>
-                                    </excludes>
-                                </filter>
-                            </filters>
                             <relocations>
                                 <relocation>
-                                    <pattern>com.google.gson</pattern>
-                                    <shadedPattern>com.aermini.libs.gson</shadedPattern>
+                                    <pattern>redis.clients.jedis</pattern>
+                                    <shadedPattern>com.aermini.libs.jedis</shadedPattern>
                                 </relocation>
                                 <relocation>
-                                    <pattern>br.com.azalim.mcserverping</pattern>
-                                    <shadedPattern>com.aermini.libs.mcserverping</shadedPattern>
-                                </relocation>
-                                <relocation>
-                                    <pattern>org.xbill.DNS</pattern>
-                                    <shadedPattern>com.aermini.libs.dns</shadedPattern>
-                                </relocation>
-                                <relocation>
-                                    <pattern>org.slf4j</pattern>
-                                    <shadedPattern>com.aermini.libs.slf4j</shadedPattern>
-                                </relocation>
-                                <relocation>
-                                    <pattern>ch.qos.logback</pattern>
-                                    <shadedPattern>com.aermini.libs.logback</shadedPattern>
+                                    <pattern>org.apache.commons.pool2</pattern>
+                                    <shadedPattern>com.aermini.libs.pool2</shadedPattern>
                                 </relocation>
                             </relocations>
                         </configuration>

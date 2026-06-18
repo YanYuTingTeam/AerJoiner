@@ -1,11 +1,43 @@
-# servers抄袭了 ServerJoiner
+# 分组配置
+# 格式一(motd, 兼容旧版):
+#   bw:
+#     - bw44
+#     - bwdul
+# 格式二(motd, 推荐):
+#   bw:
+#     method: motd
+#     prefixes:
+#       - bw44
+#       - bwdul
+# 格式三(redis, 基础):
+#   bw-solo:
+#     method: redis
+#     mode: solo
+# 格式四(redis, 完整):
+#   bw-solo:
+#     method: redis
+#     modes:                     # 多个mode，与mode二选一
+#       - solo
+#       - xpsolo
+#     joinable-states:           # 可加入的状态（默认 WAITING）
+#       - WAITING
+#       - STARTING
+#     channel: "bedwars:match"   # pub/sub 频道（默认 bedwars:match）
+#     key-prefix: "bedwars:"     # Redis key 前缀（默认 bedwars:）
+#     server-filter:             # 服务器地址过滤（可选，支持 * 通配符）
+#       - "192.168.1.*"
+#     arena-exclude:             # 排除特定地图（可选，支持 * 通配符）
+#       - "TestMap"
+
 group:
   bw:
-    - bw44
-    - bwdul
+    method: motd
+    prefixes:
+      - bw44
+      - bwdul
 
 servers:
-  bw44: # regex
+  bw44:
     - |-
       State: [1-2]
       Map: .*

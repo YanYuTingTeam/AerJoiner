@@ -5,13 +5,15 @@ import com.aermini.commands.JoinCommand;
 import com.aermini.listeners.AerJoinerListener;
 import com.aermini.managers.AerPartyManager;
 import com.aermini.managers.CooldownManager;
+import com.aermini.managers.RedisManager;
 import com.aermini.managers.ServerManager;
 import com.aermini.managers.TeleportLockManager;
+import com.aermini.placeholder.AerJoinerExpansion;
 import org.bukkit.Bukkit;
 import org.bukkit.entity.Player;
 import org.bukkit.plugin.java.JavaPlugin;
 import org.bukkit.plugin.messaging.PluginMessageListener;
-import com.aermini.placeholder.AerJoinerExpansion;
+
 import java.util.Objects;
 
 public class AerJoiner extends JavaPlugin implements PluginMessageListener {
@@ -20,7 +22,8 @@ public class AerJoiner extends JavaPlugin implements PluginMessageListener {
     private CooldownManager cooldownManager;
     private TeleportLockManager teleportLockManager;
     private AerPartyManager aerPartyManager;
-    // AI -> static{..}
+    private RedisManager redisManager;
+
     static {
         try {
             System.setProperty("logback.configurationFile", "/dev/null");
@@ -47,6 +50,16 @@ public class AerJoiner extends JavaPlugin implements PluginMessageListener {
         } else {
             getLogger().warning("未找到 papi");
         }
+
+        if (getConfig().getBoolean("redis.enabled", false)) {
+            try {
+                this.redisManager = new RedisManager(this);
+            } catch (Exception e) {
+                getLogger().severe("RedisManager 初始化失败: " + e.getMessage());
+                this.redisManager = null;
+            }
+        }
+
         this.serverManager = new ServerManager(this);
         this.cooldownManager = new CooldownManager(this);
         this.teleportLockManager = new TeleportLockManager(this);
@@ -56,9 +69,7 @@ public class AerJoiner extends JavaPlugin implements PluginMessageListener {
         Objects.requireNonNull(getCommand("join")).setExecutor(new JoinCommand(this));
 
         Bukkit.getScheduler().runTaskTimerAsynchronously(
-                this,
-                serverManager::updateAllServers,
-                0,
+                this, serverManager::updateAllServers, 0,
                 getConfig().getLong("update_delay", 200)
         );
 
@@ -67,9 +78,8 @@ public class AerJoiner extends JavaPlugin implements PluginMessageListener {
 
     @Override
     public void onDisable() {
-        if (aerPartyManager != null) {
-            aerPartyManager.cleanup();
-        }
+        if (aerPartyManager != null) aerPartyManager.cleanup();
+        if (redisManager != null) redisManager.shutdown();
         this.getServer().getMessenger().unregisterOutgoingPluginChannel(this);
         this.getServer().getMessenger().unregisterIncomingPluginChannel(this, "aerparty:main", this);
         getLogger().info("AerJoiner 已禁用");
@@ -86,23 +96,11 @@ public class AerJoiner extends JavaPlugin implements PluginMessageListener {
         aerPartyManager.requestMatchCheck(player, groupName);
     }
 
-    public ServerManager getServerManager() {
-        return serverManager;
-    }
+    public ServerManager getServerManager() { return serverManager; }
+    public CooldownManager getCooldownManager() { return cooldownManager; }
+    public TeleportLockManager getTeleportLockManager() { return teleportLockManager; }
+    public AerPartyManager getAerPartyManager() { return aerPartyManager; }
+    public RedisManager getRedisManager() { return redisManager; }
 
-    public CooldownManager getCooldownManager() {
-        return cooldownManager;
-    }
-
-    public TeleportLockManager getTeleportLockManager() {
-        return teleportLockManager;
-    }
-
-    public AerPartyManager getAerPartyManager() {
-        return aerPartyManager;
-    }
-
-    public static AerJoiner getInstance() {
-        return instance;
-    }
+    public static AerJoiner getInstance() { return instance; }
 }

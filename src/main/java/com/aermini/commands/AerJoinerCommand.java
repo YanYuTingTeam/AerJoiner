@@ -16,9 +16,7 @@ import java.util.regex.Pattern;
 
 public class AerJoinerCommand implements CommandExecutor {
     private final AerJoiner plugin;
-    public AerJoinerCommand(AerJoiner plugin) {
-        this.plugin = plugin;
-    }
+    public AerJoinerCommand(AerJoiner plugin) { this.plugin = plugin; }
 
     @Override
     public boolean onCommand(CommandSender sender, Command command, String label, String[] args) {
@@ -26,23 +24,12 @@ public class AerJoinerCommand implements CommandExecutor {
             sender.sendMessage("§e§lAerJoiner §r§7for §b§lYanYuTing §8| §r§fby. §dAerMini");
             return true;
         }
-
         switch (args[0].toLowerCase()) {
-            case "quick":
-                handleQuickJoin(sender, args);
-                break;
-            case "reload":
-                handleReload(sender);
-                break;
-            case "list":
-                handleList(sender, args);
-                break;
-            case "help":
-                sendUsage(sender);
-                break;
-            default:
-                sender.sendMessage("§e§lAerJoiner §r§7for §b§lYanYuTing §8| §r§fby. §dAerMini");
-                break;
+            case "quick": handleQuickJoin(sender, args); break;
+            case "reload": handleReload(sender); break;
+            case "list": handleList(sender, args); break;
+            case "help": sendUsage(sender); break;
+            default: sender.sendMessage("§e§lAerJoiner §r§7for §b§lYanYuTing §8| §r§fby. §dAerMini"); break;
         }
         return true;
     }
@@ -58,18 +45,14 @@ public class AerJoinerCommand implements CommandExecutor {
     }
 
     private void handleReload(CommandSender sender) {
-        if (!sender.hasPermission("aerjoiner.reload")) {
-            return;
-        }
+        if (!sender.hasPermission("aerjoiner.reload")) return;
         plugin.reloadConfig();
         plugin.getServerManager().loadServers();
         sender.sendMessage("§aAerJoiner 配置已重新加载");
     }
 
     private void handleList(CommandSender sender, String[] args) {
-        if (!sender.hasPermission("aerjoiner.list")) {
-            return;
-        }
+        if (!sender.hasPermission("aerjoiner.list")) return;
         if (args.length < 2) {
             Collection<CategoryData> categories = plugin.getServerManager().getCategories();
             if (categories.isEmpty()) {
@@ -78,8 +61,8 @@ public class AerJoinerCommand implements CommandExecutor {
             }
             sender.sendMessage("§6--- ALL ---");
             for (CategoryData category : categories) {
-                int serverCount = category.getServerNames().size();
-                sender.sendMessage("§b" + category.getName() + " §f- " + category.getDisplayName() + " §7(" + serverCount + "个房间)");
+                String methodTag = "redis".equals(category.getMethod()) ? " §d[redis]" : " §7[motd]";
+                sender.sendMessage("§b" + category.getName() + " §f- " + category.getDisplayName() + methodTag + " §7(" + category.getServerNames().size() + "个房间)");
             }
         } else {
             String categoryName = args[1];
@@ -93,29 +76,33 @@ public class AerJoinerCommand implements CommandExecutor {
                 sender.sendMessage("§e分组 " + categoryName + " 为空");
                 return;
             }
-            sender.sendMessage("§6--- " + category.getDisplayName() + " ---");
+            String methodTag = "redis".equals(category.getMethod()) ? " [redis]" : " [motd]";
+            sender.sendMessage("§6--- " + category.getDisplayName() + methodTag + " ---");
             for (ServerData server : servers) {
                 String status;
-                if (server.getPlayerCount() == -1) {
-                    status = "§c离线";
+                if ("redis".equals(category.getMethod())) {
+                    String state = server.getState();
+                    boolean joinable = category.getJoinableStates().contains(state);
+                    status = (joinable ? "§a" : "§c") + state + "§7(" + server.getPlayerCount() + "/" + server.getMaxPlayers() + ")";
+                    sender.sendMessage("§f- §b" + server.getDisplayName() + " " + status + " §f| " + (joinable ? "§a可加入" : "§c不可加入"));
                 } else {
-                    status = "§a在线§7(" + server.getPlayerCount() + ")";
+                    if (server.getPlayerCount() == -1) {
+                        status = "§c离线";
+                    } else {
+                        status = "§a在线§7(" + server.getPlayerCount() + ")";
+                    }
+                    boolean isJoinable = isMotdServerJoinable(server.getName(), server.getMotd(), category.getPrefixJoinablePatterns());
+                    sender.sendMessage("§f- §b" + server.getDisplayName() + " " + status + " §f| " + (isJoinable ? "§a可加入" : "§c不可加入"));
                 }
-                boolean isJoinable = isServerJoinable(server.getName(), server.getMotd(), category.getPrefixJoinablePatterns());
-                String joinableStatus = isJoinable ? "§a可加入" : "§c不可加入";
-                sender.sendMessage("§f- §b" + server.getDisplayName() + " " + status + " §f| " + joinableStatus);
             }
         }
     }
 
-    private boolean isServerJoinable(String serverName, String motd, Map<String, Set<Pattern>> prefixPatterns) {
+    private boolean isMotdServerJoinable(String serverName, String motd, Map<String, Set<Pattern>> prefixPatterns) {
         for (String prefix : prefixPatterns.keySet()) {
             if (serverName.startsWith(prefix)) {
-                Set<Pattern> patterns = prefixPatterns.get(prefix);
-                for (Pattern pattern : patterns) {
-                    if (pattern.matcher(motd).find()) {
-                        return true;
-                    }
+                for (Pattern pattern : prefixPatterns.get(prefix)) {
+                    if (pattern.matcher(motd).find()) return true;
                 }
             }
         }

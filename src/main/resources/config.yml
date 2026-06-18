@@ -1,5 +1,5 @@
-update_delay: 60  # tick
-timeout: 500  # ms
+update_delay: 60
+timeout: 500
 bungee_config_path: "D:/YYT-260116/25565_Waterfall/config.yml"
 teleport_check_interval: 1
 teleport_max_retries: 3
@@ -9,10 +9,20 @@ start:
 success:
   title: "§a匹配成功|§e开始加入...|10|30|10"
 failed:
-  no_room: 
+  no_room:
     title: "§4匹配失败|§e没有可用房间|10|30|10"
   too_fast:
     title: "§4匹配失败|§e请勿点击过快|10|30|10"
   no_group:
     title: "§4匹配失败|§e剩余可用房间为0|10|30|10"
 max_request: 1
+
+redis:
+  enabled: false
+  host: 127.0.0.1
+  port: 6379
+  password: ""
+  max-connections: 10
+  pool-config:
+    max-idle: 5
+    min-idle: 1
