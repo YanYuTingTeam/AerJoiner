@@ -5,8 +5,11 @@ import com.aermini.util.SLPing;
 import org.bukkit.configuration.ConfigurationSection;
 import org.bukkit.configuration.file.FileConfiguration;
 import org.bukkit.configuration.file.YamlConfiguration;
+import org.yaml.snakeyaml.Yaml;
 
 import java.io.File;
+import java.io.FileInputStream;
+import java.io.InputStream;
 import java.util.*;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.regex.Pattern;
@@ -19,12 +22,113 @@ public class ServerManager {
     private final Map<String, ServerData> servers = new ConcurrentHashMap<>();
     private final File serversFile;
     private Map<String, String> bungeeAddressToName = new HashMap<>();
+    private Map<String, String> ipMap = new HashMap<>();
 
     public ServerManager(AerJoiner plugin) {
         this.plugin = plugin;
         this.serversFile = new File(plugin.getDataFolder(), "servers.yml");
         loadServers();
     }
+
+    // ==================== IP 映射 ====================
+
+    /**
+     * 读取 config.yml 中 redis.ip-map，建立 Redis IP → BungeeCord IP 的映射
+     * 例如: 192.168.1.92 → 127.0.0.1
+     *
+     * 注意: Bukkit 的 MemorySection 会把 key 中的 '.' 当作路径分隔符，
+     * 导致 "192.168.2.91" 被拆成嵌套的 192->168->2->91，
+     * 所以必须直接用 SnakeYAML 读取原始 YAML 文件来获取 ip-map。
+     */
+    @SuppressWarnings("unchecked")
+    private void loadIpMap() {
+        ipMap.clear();
+        File configFile = new File(plugin.getDataFolder(), "config.yml");
+        if (!configFile.exists()) {
+            plugin.getLogger().warning("config.yml 不存在，跳过 ip-map 加载");
+            return;
+        }
+        try {
+            Yaml yaml = new Yaml();
+            Map<String, Object> root;
+            try (InputStream is = new FileInputStream(configFile)) {
+                root = (Map<String, Object>)yaml.load(is);
+            }
+            if (root == null) return;
+            Map<String, Object> redis = (Map<String, Object>) root.get("redis");
+            if (redis == null) return;
+            Map<String, Object> ipMapRaw = (Map<String, Object>) redis.get("ip-map");
+            if (ipMapRaw == null) return;
+            for (Map.Entry<String, Object> entry : ipMapRaw.entrySet()) {
+                String redisIp = entry.getKey();
+                String mappedIp = String.valueOf(entry.getValue());
+                ipMap.put(redisIp, mappedIp);
+                plugin.getLogger().info("IP 映射: " + redisIp + " → " + mappedIp);
+            }
+            if (!ipMap.isEmpty()) {
+                plugin.getLogger().info("共加载 " + ipMap.size() + " 条 IP 映射");
+            }
+        } catch (Exception e) {
+            plugin.getLogger().warning("加载 IP 映射失败: " + e.getMessage());
+        }
+    }
+
+    /**
+     * 将 Redis 中的地址（如 192.168.1.92:20001）应用 IP 映射后返回（如 127.0.0.1:20001）
+     * 无映射则原样返回
+     */
+    public String applyIpMap(String address) {
+        int colonIdx = address.lastIndexOf(':');
+        if (colonIdx < 0) return address;
+        String ip = address.substring(0, colonIdx);
+        String port = address.substring(colonIdx + 1);
+        String mappedIp = ipMap.get(ip);
+        if (mappedIp != null) {
+            return mappedIp + ":" + port;
+        }
+        return address;
+    }
+
+    /**
+     * 调试用: 返回当前 ip-map 的内容（用于日志诊断）
+     */
+    public String dumpIpMap() {
+        if (ipMap.isEmpty()) return "(empty)";
+        StringBuilder sb = new StringBuilder();
+        for (Map.Entry<String, String> e : ipMap.entrySet()) {
+            sb.append(e.getKey()).append("->").append(e.getValue()).append(", ");
+        }
+        return sb.toString();
+    }
+
+    /**
+     * 规范化地址: 将 localhost / 0.0.0.0 统一为 127.0.0.1，
+     * 确保 BungeeCord 配置中的 "localhost:port" 与 ip-map 映射后的 "127.0.0.1:port" 能正确匹配。
+     */
+    private static String normalizeAddress(String address) {
+        if (address == null) return null;
+        int colonIdx = address.lastIndexOf(':');
+        if (colonIdx < 0) return address;
+        String host = address.substring(0, colonIdx);
+        String port = address.substring(colonIdx); // 含冒号
+        if ("localhost".equalsIgnoreCase(host) || "0.0.0.0".equals(host)) {
+            return "127.0.0.1" + port;
+        }
+        return address;
+    }
+
+    /**
+     * 根据 Redis 中的地址，经过 IP 映射后查找 BungeeCord 中的服务器名
+     * @param redisAddress Redis 中的原始地址，如 192.168.1.92:20001
+     * @return BungeeCord 服务器名，如 "bw-1"；找不到返回 null
+     */
+    public String resolveBungeeServerName(String redisAddress) {
+        String mappedAddress = normalizeAddress(applyIpMap(redisAddress));
+        String serverName = bungeeAddressToName.get(mappedAddress);
+        return serverName;
+    }
+
+    // ==================== BungeeCord 配置读取（仅 MOTD 模式需要） ====================
 
     private Map<String, String> readBungeeConfig() {
         Map<String, String> bungeeServers = new HashMap<>();
@@ -50,7 +154,7 @@ public class ServerManager {
                 String address = serverSection.getString("address");
                 if (address != null) {
                     bungeeServers.put(serverName, address);
-                    bungeeAddressToName.put(address, serverName);
+                    bungeeAddressToName.put(normalizeAddress(address), serverName);
                 }
             }
             plugin.getLogger().info("成功从配置读取 " + bungeeServers.size() + " 个服务器");
@@ -67,17 +171,18 @@ public class ServerManager {
                 .collect(Collectors.toList());
     }
 
+    // ==================== 加载服务器分组 ====================
+
     public void loadServers() {
+        // 重新加载 ip-map，确保 /aerjoiner reload 后 ip-map 也是最新的
+        loadIpMap();
+
         FileConfiguration config = YamlConfiguration.loadConfiguration(serversFile);
         categories.clear();
         servers.clear();
+        bungeeAddressToName.clear();
 
         Map<String, String> bungeeServers = readBungeeConfig();
-        bungeeAddressToName.clear();
-        if (bungeeServers.isEmpty()) {
-            plugin.getLogger().warning("未能从bungee读到任何服务器. 无法继续加载");
-            return;
-        }
 
         if (config.getConfigurationSection("group") == null) {
             plugin.getLogger().warning("servers.yml中未配置group");
@@ -193,6 +298,8 @@ public class ServerManager {
                 + ", states=" + joinableStates + ", channel=" + channel + ", prefix=" + keyPrefix);
     }
 
+    // ==================== 定时更新 ====================
+
     private boolean isUpdating = false;
     public void updateAllServers() {
         if (isUpdating) return;
@@ -225,6 +332,10 @@ public class ServerManager {
         }
     }
 
+    /**
+     * 定时 SCAN Redis 刷新房间数据
+     * Redis 模式的房间从 Redis key 中发现（不依赖 BungeeCord 配置）
+     */
     private void updateRedisGroups() {
         RedisManager redisManager = plugin.getRedisManager();
         if (redisManager == null) return;
@@ -240,14 +351,13 @@ public class ServerManager {
 
             for (ServerData game : games) {
                 currentNames.add(game.getArenaName());
-                String bungeeName = bungeeAddressToName.get(game.getServerAddress());
-                if (bungeeName != null) game.setName(bungeeName);
                 ServerData existing = servers.get(game.getArenaName());
                 if (existing != null) {
                     existing.setPlayerCount(game.getPlayerCount());
                     existing.setMaxPlayers(game.getMaxPlayers());
                     existing.setState(game.getState());
                     existing.setRedisMode(game.getRedisMode());
+                    existing.setServerAddress(game.getServerAddress());
                 } else {
                     servers.put(game.getArenaName(), game);
                 }
@@ -260,9 +370,7 @@ public class ServerManager {
         }
     }
 
-    public String getBungeeNameByAddress(String address) {
-        return bungeeAddressToName.get(address);
-    }
+    // ==================== 查询方法 ====================
 
     public CategoryData findCategoryForServer(String serverName) {
         for (CategoryData category : categories.values()) {
@@ -291,65 +399,4 @@ public class ServerManager {
     }
 
     public Collection<CategoryData> getCategories() { return categories.values(); }
-
-    // ==================== 实时状态更新（来自 Pub/Sub） ====================
-
-    /**
-     * 处理游戏服推送的实时状态变更
-     * 消息格式:
-     *   UPDATE,{ip}:{port},{arenaName},{playerCount},{maxPlayers},{state}
-     *   REMOVE,{ip}:{port},{arenaName}
-     */
-    public void handleStateUpdate(String message) {
-        try {
-            String[] parts = message.split(",", -1);
-            if (parts.length < 3) return;
-
-            String action = parts[0].trim();
-            String serverAddress = parts[1].trim();
-            String arenaName = parts[2].trim();
-
-            if ("UPDATE".equals(action) && parts.length >= 6) {
-                int playerCount = Integer.parseInt(parts[3].trim());
-                int maxPlayers = Integer.parseInt(parts[4].trim());
-                String state = parts[5].trim();
-
-                ServerData existing = servers.get(arenaName);
-                if (existing != null) {
-                    existing.setPlayerCount(playerCount);
-                    existing.setMaxPlayers(maxPlayers);
-                    existing.setState(state);
-                } else {
-                    // SCAN 还没发现这个房间，提前创建（下一轮 SCAN 会补充 bungeeName 等）
-                    ServerData gameData = new ServerData(arenaName, arenaName, serverAddress);
-                    gameData.setPlayerCount(playerCount);
-                    gameData.setMaxPlayers(maxPlayers);
-                    gameData.setState(state);
-                    gameData.setArenaName(arenaName);
-                    gameData.setServerAddress(serverAddress);
-                    servers.put(arenaName, gameData);
-
-                    // 同时加入对应 redis 分组的 serverNames
-                    String bungeeName = bungeeAddressToName.get(serverAddress);
-                    if (bungeeName != null) gameData.setName(bungeeName);
-                    for (CategoryData category : categories.values()) {
-                        if ("redis".equals(category.getMethod())) {
-                            category.getServerNames().add(arenaName);
-                        }
-                    }
-                }
-            } else if ("REMOVE".equals(action)) {
-                ServerData removed = servers.remove(arenaName);
-                if (removed != null) {
-                    for (CategoryData category : categories.values()) {
-                        if ("redis".equals(category.getMethod())) {
-                            category.getServerNames().remove(arenaName);
-                        }
-                    }
-                }
-            }
-        } catch (Exception e) {
-            plugin.getLogger().warning("ServerManager > 处理状态更新失败: " + message + " - " + e.getMessage());
-        }
-    }
 }

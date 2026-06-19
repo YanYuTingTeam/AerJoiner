@@ -1,33 +1,32 @@
 package com.aermini.managers;
 
 import com.aermini.AerJoiner;
-import org.bukkit.Bukkit;
 import org.bukkit.configuration.ConfigurationSection;
 import redis.clients.jedis.Jedis;
 import redis.clients.jedis.JedisPool;
 import redis.clients.jedis.JedisPoolConfig;
-import redis.clients.jedis.JedisPubSub;
 import redis.clients.jedis.ScanParams;
 import redis.clients.jedis.ScanResult;
 
 import java.util.ArrayList;
 import java.util.List;
 import java.util.Map;
-import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.regex.Pattern;
 
+/**
+ * 精简版 RedisManager — 只做两件事:
+ * 1. SCAN: 扫描 Redis 中的游戏房间 key（定时调用）
+ * 2. PUBLISH: 发送 fire-and-forget 加入消息到游戏服
+ *
+ * 无 Pub/Sub 订阅，无请求-响应，无跨集群。
+ * 对应 BedwarsRel (朋友版) 的 Redis 协议:
+ *   Key 格式:   bedwars:{mode}:{ip}:{port}:{arenaName}
+ *   消息格式:   playerName,mode,arenaName,ip:port  →  频道 bedwars:match
+ */
 public class RedisManager {
 
     private final JedisPool pool;
     private final AerJoiner plugin;
-    private final String stateChannel;
-
-    private volatile JedisPubSub stateSubscriber;
-    private volatile Thread stateSubscriberThread;
-    private final AtomicBoolean running = new AtomicBoolean(true);
-
-    private static final long RECONNECT_DELAY_SECONDS = 5;
-    private static final int MAX_RECONNECT_ATTEMPTS = 10;
 
     public RedisManager(AerJoiner plugin) {
         this.plugin = plugin;
@@ -49,7 +48,7 @@ public class RedisManager {
         config.setMinIdle(minIdle);
         config.setTestOnBorrow(true);
         config.setTestWhileIdle(true);
-        config.setTimeBetweenEvictionRunsMillis(30000);
+        config.setTimeBetweenEvictionRunsMillis(30_000);
 
         int timeoutMs = 2000;
         if (password == null || password.isEmpty()) {
@@ -58,176 +57,115 @@ public class RedisManager {
             this.pool = new JedisPool(config, host, port, timeoutMs, password);
         }
 
-        this.stateChannel = section.getString("state-channel", "aerjoiner:state");
-
         plugin.getLogger().info("RedisManager > 已初始化 - host: " + host + ", port: " + port);
-        plugin.getLogger().info("RedisManager > 状态订阅通道: " + stateChannel);
-
-        startStateSubscriber();
     }
 
-    // ==================== Pub/Sub 状态订阅（接收游戏服的实时更新） ====================
+    // ==================== PUBLISH: fire-and-forget 加入消息 ====================
 
-    private void startStateSubscriber() {
-        if (stateSubscriberThread != null && stateSubscriberThread.isAlive()) {
-            plugin.getLogger().info("RedisManager > 状态订阅器已在运行，跳过启动");
-            return;
+    /**
+     * 向游戏服发送 fire-and-forget 加入消息
+     * 消息格式: playerName,mode,arenaName,ip:port
+     *
+     * @param playerName    玩家名
+     * @param mode          游戏模式 (solo/dul/44/32/64 等)
+     * @param arenaName     房间名
+     * @param serverAddress 目标游戏服地址 ip:port
+     * @param channel       Redis 频道名 (默认 bedwars:match)
+     */
+    public void publishJoinMessage(String playerName, String mode, String arenaName,
+                                    String serverAddress, String channel) {
+        String message = playerName + "," + mode + "," + arenaName + "," + serverAddress;
+
+        try (Jedis jedis = pool.getResource()) {
+            jedis.publish(channel, message);
+        } catch (Exception e) {
+            plugin.getLogger().warning("RedisManager > [发送消息] ✗ 发送失败: " + e.getMessage());
         }
-
-        this.stateSubscriber = new JedisPubSub() {
-            @Override
-            public void onMessage(String channel, String message) {
-                if (!stateChannel.equals(channel)) return;
-                try {
-                    Bukkit.getScheduler().runTask(plugin, () -> {
-                        plugin.getServerManager().handleStateUpdate(message);
-                    });
-                } catch (Exception e) {
-                    plugin.getLogger().warning("RedisManager > 处理状态更新异常: " + e.getMessage());
-                }
-            }
-
-            @Override
-            public void onSubscribe(String channel, int subscribedChannels) {
-                plugin.getLogger().info("RedisManager > 已订阅状态通道: " + channel
-                        + " (共 " + subscribedChannels + " 个频道)");
-            }
-
-            @Override
-            public void onUnsubscribe(String channel, int subscribedChannels) {
-                plugin.getLogger().info("RedisManager > 已取消订阅状态通道: " + channel);
-            }
-        };
-
-        this.stateSubscriberThread = new Thread(this::runStateSubscriptionLoop, "AerJoinerStateSubscriber");
-        stateSubscriberThread.setDaemon(true);
-        stateSubscriberThread.start();
     }
 
-    private void runStateSubscriptionLoop() {
-        int attempt = 0;
-        while (running.get()) {
-            try (Jedis jedis = pool.getResource()) {
-                plugin.getLogger().info("RedisManager > 开始监听状态通道: " + stateChannel);
-                jedis.subscribe(stateSubscriber, stateChannel);
-                break;
-            } catch (Exception e) {
-                attempt++;
-                if (!running.get()) break;
+    // ==================== SCAN: 扫描可用房间 ====================
 
-                plugin.getLogger().warning("RedisManager > 状态订阅断开 (第 " + attempt
-                        + "/" + MAX_RECONNECT_ATTEMPTS + " 次): " + e.getMessage());
-
-                if (attempt >= MAX_RECONNECT_ATTEMPTS) {
-                    plugin.getLogger().severe("RedisManager > 状态订阅达到最大重连次数，放弃重连");
-                    break;
-                }
-
-                try {
-                    Thread.sleep(RECONNECT_DELAY_SECONDS * 1000);
-                } catch (InterruptedException ie) {
-                    Thread.currentThread().interrupt();
-                    break;
-                }
-            }
-        }
-        plugin.getLogger().info("RedisManager > 状态订阅线程已退出");
-    }
-
-    // ==================== SCAN（全量发现） ====================
-
+    /**
+     * 扫描 Redis 中所有可用的游戏房间
+     * Key 格式: bedwars:{mode}:{ip}:{port}:{arenaName}
+     *
+     * @param keyPrefix    Redis key 前缀，如 "bedwars:"
+     * @param modes        要匹配的游戏模式列表
+     * @param serverFilter 服务器地址过滤（可选，glob 通配符）
+     * @param arenaExclude 地图名排除（可选，glob 通配符）
+     */
     public List<ServerData> scanGames(String keyPrefix, List<String> modes,
                                        List<Pattern> serverFilter, List<Pattern> arenaExclude) {
         List<ServerData> games = new ArrayList<>();
         try (Jedis jedis = pool.getResource()) {
-            for (String mode : modes) {
-                String pattern = keyPrefix + mode + ":*";
-                ScanParams scanParams = new ScanParams().match(pattern).count(100);
-                String cursor = "0";
-                do {
-                    ScanResult<String> result = jedis.scan(cursor, scanParams);
-                    for (String key : result.getResult()) {
-                        try {
-                            Map<String, String> data = jedis.hgetAll(key);
-                            if (data.isEmpty()) continue;
+            String pattern = keyPrefix + "*";
+            ScanParams scanParams = new ScanParams().match(pattern).count(100);
+            String cursor = "0";
 
-                            String keyBody = key.substring(keyPrefix.length());
-                            String[] parts = keyBody.split(":", 4);
-                            if (parts.length < 4) continue;
+            do {
+                ScanResult<String> result = jedis.scan(cursor, scanParams);
+                for (String key : result.getResult()) {
+                    try {
+                        Map<String, String> data = jedis.hgetAll(key);
+                        if (data.isEmpty()) continue;
 
-                            String scannedMode = parts[0];
-                            String serverAddress = parts[1] + ":" + parts[2];
-                            String arenaName = parts[3];
+                        // 解析 key: bedwars:{mode}:{ip}:{port}:{arenaName}
+                        String keyBody = key.substring(keyPrefix.length());
+                        String[] keyParts = keyBody.split(":", -1);
 
-                            if (serverFilter != null) {
-                                boolean matched = false;
-                                for (Pattern p : serverFilter) if (p.matcher(serverAddress).matches()) { matched = true; break; }
-                                if (!matched) continue;
+                        if (keyParts.length != 4) continue;
+
+                        String scannedMode = keyParts[0];
+                        String serverAddress = keyParts[1] + ":" + keyParts[2];
+                        String arenaName = keyParts[3];
+
+                        // 过滤: 模式
+                        if (!modes.contains(scannedMode)) continue;
+
+                        // 过滤: server-filter
+                        if (serverFilter != null) {
+                            boolean matched = false;
+                            for (Pattern p : serverFilter) {
+                                if (p.matcher(serverAddress).matches()) { matched = true; break; }
                             }
+                            if (!matched) continue;
+                        }
 
-                            if (arenaExclude != null) {
-                                boolean excluded = false;
-                                for (Pattern p : arenaExclude) if (p.matcher(arenaName).matches()) { excluded = true; break; }
-                                if (excluded) continue;
+                        // 过滤: arena-exclude
+                        if (arenaExclude != null) {
+                            boolean excluded = false;
+                            for (Pattern p : arenaExclude) {
+                                if (p.matcher(arenaName).matches()) { excluded = true; break; }
                             }
+                            if (excluded) continue;
+                        }
 
-                            int playerCount = Integer.parseInt(data.getOrDefault("playerCount", "0"));
-                            int maxPlayers = Integer.parseInt(data.getOrDefault("maxPlayers", "0"));
-                            String state = data.getOrDefault("state", "STOPPED");
+                        int playerCount = Integer.parseInt(data.getOrDefault("playerCount", "0"));
+                        int maxPlayers = Integer.parseInt(data.getOrDefault("maxPlayers", "0"));
+                        String state = data.getOrDefault("state", "STOPPED");
 
-                            ServerData gameData = new ServerData(arenaName, arenaName, serverAddress);
-                            gameData.setPlayerCount(playerCount);
-                            gameData.setMaxPlayers(maxPlayers);
-                            gameData.setState(state);
-                            gameData.setArenaName(arenaName);
-                            gameData.setServerAddress(serverAddress);
-                            gameData.setRedisMode(scannedMode);
+                        ServerData gameData = new ServerData(arenaName, arenaName, serverAddress);
+                        gameData.setPlayerCount(playerCount);
+                        gameData.setMaxPlayers(maxPlayers);
+                        gameData.setState(state);
+                        gameData.setArenaName(arenaName);
+                        gameData.setServerAddress(serverAddress);
+                        gameData.setRedisMode(scannedMode);
 
-                            games.add(gameData);
-                        } catch (Exception ignored) {}
-                    }
-                    cursor = result.getCursor();
-                } while (!cursor.equals("0"));
-            }
+                        games.add(gameData);
+                    } catch (Exception ignored) {}
+                }
+                cursor = result.getCursor();
+            } while (!cursor.equals("0"));
         } catch (Exception e) {
-            plugin.getLogger().warning("RedisManager > scan 失败: " + e.getMessage());
+            plugin.getLogger().warning("RedisManager > [SCAN] 扫描失败: " + e.getMessage());
         }
         return games;
-    }
-
-    // ==================== PUBLISH（通知游戏服有玩家要来） ====================
-
-    public void publishJoin(String playerName, String mode, String arenaName,
-                            String serverAddress, String channel) {
-        try (Jedis jedis = pool.getResource()) {
-            String message = playerName + "," + mode + "," + arenaName + "," + serverAddress;
-            jedis.publish(channel, message);
-        } catch (Exception e) {
-            plugin.getLogger().warning("RedisManager > publish 失败: " + e.getMessage());
-        }
     }
 
     // ==================== 关闭 ====================
 
     public void shutdown() {
-        running.set(false);
-
-        if (stateSubscriber != null && stateSubscriber.isSubscribed()) {
-            try {
-                stateSubscriber.unsubscribe();
-            } catch (Exception e) {
-                plugin.getLogger().warning("RedisManager > 取消状态订阅失败: " + e.getMessage());
-            }
-        }
-        if (stateSubscriberThread != null) {
-            stateSubscriberThread.interrupt();
-            try {
-                stateSubscriberThread.join(3000);
-            } catch (InterruptedException e) {
-                Thread.currentThread().interrupt();
-            }
-        }
-
         if (pool != null && !pool.isClosed()) {
             pool.close();
             plugin.getLogger().info("RedisManager > 已关闭");

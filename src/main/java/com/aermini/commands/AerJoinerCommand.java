@@ -4,6 +4,8 @@ import com.aermini.AerJoiner;
 import com.aermini.managers.CategoryData;
 import com.aermini.managers.JoinLogic;
 import com.aermini.managers.ServerData;
+import com.aermini.util.SLPing;
+import org.bukkit.Bukkit;
 import org.bukkit.command.Command;
 import org.bukkit.command.CommandExecutor;
 import org.bukkit.command.CommandSender;
@@ -28,6 +30,7 @@ public class AerJoinerCommand implements CommandExecutor {
             case "quick": handleQuickJoin(sender, args); break;
             case "reload": handleReload(sender); break;
             case "list": handleList(sender, args); break;
+            case "getmotd": handleGetMotd(sender, args); break;
             case "help": sendUsage(sender); break;
             default: sender.sendMessage("§e§lAerJoiner §r§7for §b§lYanYuTing §8| §r§fby. §dAerMini"); break;
         }
@@ -109,11 +112,49 @@ public class AerJoinerCommand implements CommandExecutor {
         return false;
     }
 
+    private void handleGetMotd(CommandSender sender, String[] args) {
+        if (!sender.hasPermission("aerjoiner.getmotd")) return;
+        if (args.length < 2) {
+            sender.sendMessage("§c用法: /aerjoiner getmotd <ip>[:port]");
+            return;
+        }
+        String host = args[1];
+        int port = 25565;
+        if (host.contains(":")) {
+            String[] parts = host.split(":", 2);
+            host = parts[0];
+            try { port = Integer.parseInt(parts[1]); } catch (NumberFormatException e) {
+                sender.sendMessage("§c端口号无效: " + parts[1]);
+                return;
+            }
+        }
+        sender.sendMessage("§e正在 ping §f" + host + ":" + port + "§e...");
+        final String fHost = host;
+        final int fPort = port;
+        Bukkit.getScheduler().runTaskAsynchronously(plugin, () -> {
+            int timeout = plugin.getConfig().getInt("timeout", 500);
+            SLPing.Response resp = SLPing.ping(fHost, fPort, timeout);
+            Bukkit.getScheduler().runTask(plugin, () -> {
+                if (resp == null) {
+                    sender.sendMessage("§cPing 失败: 服务器无响应或连接超时");
+                    return;
+                }
+                sender.sendMessage("§6--- SLP Ping 结果 ---");
+                sender.sendMessage("§7地址: §f" + fHost + ":" + fPort);
+                sender.sendMessage("§7版本: §f" + resp.version + " §7(协议 " + resp.protocol + ")");
+                sender.sendMessage("§7人数: §a" + resp.online + "§7/§c" + resp.max);
+                sender.sendMessage("§7MOTD: §f" + resp.motdClean);
+                sender.sendMessage("§7Favicon: " + (resp.favicon.isEmpty() ? "§c无" : "§a有 (" + resp.favicon.length() + " 字符)"));
+            });
+        });
+    }
+
     private void sendUsage(CommandSender sender) {
         sender.sendMessage("§6--- AerJoiner 命令帮助 ---");
         sender.sendMessage("§b/aerjoiner quick <分组> §f- 快速加入分组内人数最多的房间");
         sender.sendMessage("§b/aerjoiner reload §f- 重新加载配置文件");
         sender.sendMessage("§b/aerjoiner list [分组] §f- 列出所有分组或指定分组的房间");
+        sender.sendMessage("§b/aerjoiner getmotd <ip>[:port] §f- 测试 SLP Ping");
         sender.sendMessage("§b/join <分组> §f- 快速加入的快捷方式");
     }
 }
