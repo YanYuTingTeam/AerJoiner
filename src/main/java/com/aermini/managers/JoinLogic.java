@@ -209,9 +209,14 @@ public class JoinLogic {
             sendTitle(player, "failed.no_room");
             return;
         }
-        // 1. 发送 fire-and-forget 消息
-        redisManager.publishJoinMessage(player.getName(), targetGame.getRedisMode(),
-                targetGame.getArenaName(), redisAddress, category.getRedisChannel());
+        // 1. 异步发送 fire-and-forget 消息（不阻塞主线程）
+        final String fPlayerName = player.getName();
+        final String fMode = targetGame.getRedisMode();
+        final String fArenaName = targetGame.getArenaName();
+        final String fChannel = category.getRedisChannel();
+        Bukkit.getScheduler().runTaskAsynchronously(plugin, () -> {
+            redisManager.publishJoinMessage(fPlayerName, fMode, fArenaName, redisAddress, fChannel);
+        });
 
         // 2. 用 BungeeCord 服务器名转服
         sendToServer(player, bungeeServerName);
