@@ -349,22 +349,14 @@ public class ServerManager {
                     category.getServerFilter(), category.getArenaExclude()
             );
 
+            Map<String, ServerData> categoryServers = category.getCategoryServers();
+            categoryServers.clear();
+
             for (ServerData game : games) {
                 currentNames.add(game.getArenaName());
-                ServerData existing = servers.get(game.getArenaName());
-                if (existing != null) {
-                    existing.setPlayerCount(game.getPlayerCount());
-                    existing.setMaxPlayers(game.getMaxPlayers());
-                    existing.setState(game.getState());
-                    existing.setRedisMode(game.getRedisMode());
-                    existing.setServerAddress(game.getServerAddress());
-                } else {
-                    servers.put(game.getArenaName(), game);
-                }
+                categoryServers.put(game.getArenaName(), game);
             }
 
-            ((ConcurrentHashMap<String, ServerData>) servers).keySet()
-                    .removeIf(key -> category.getServerNames().contains(key) && !currentNames.contains(key));
             category.getServerNames().clear();
             category.getServerNames().addAll(currentNames);
         }
@@ -386,6 +378,12 @@ public class ServerManager {
     public Collection<ServerData> getServersInCategory(String categoryName) {
         CategoryData category = getCategory(categoryName);
         if (category == null) return Collections.emptyList();
+        if ("redis".equals(category.getMethod())) {
+            return category.getServerNames().stream()
+                    .map(name -> category.getCategoryServers().get(name))
+                    .filter(Objects::nonNull)
+                    .collect(Collectors.toList());
+        }
         return category.getServerNames().stream()
                 .map(this::getServer)
                 .filter(Objects::nonNull)

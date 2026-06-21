@@ -3,6 +3,7 @@ package com.aermini.managers;
 import java.util.List;
 import java.util.Map;
 import java.util.Set;
+import java.util.concurrent.ConcurrentHashMap;
 import java.util.regex.Pattern;
 
 public class CategoryData {
@@ -19,6 +20,7 @@ public class CategoryData {
     private final Set<Pattern> joinablePatterns;
     private final Set<Pattern> spectatablePatterns;
     private final Map<String, Set<Pattern>> prefixJoinablePatterns;
+    private final Map<String, ServerData> categoryServers = new ConcurrentHashMap<>();
 
     public CategoryData(String name, String displayName, String method,
                         List<String> redisModes, Set<String> joinableStates,
@@ -54,4 +56,5 @@ public class CategoryData {
     public Set<Pattern> getJoinablePatterns() { return joinablePatterns; }
     public Set<Pattern> getSpectatablePatterns() { return spectatablePatterns; }
     public Map<String, Set<Pattern>> getPrefixJoinablePatterns() { return prefixJoinablePatterns; }
+    public Map<String, ServerData> getCategoryServers() { return categoryServers; }
 }
