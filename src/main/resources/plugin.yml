@@ -8,4 +8,4 @@ commands:
     usage: /<command> [quick|reload|list] [args]
     aliases: [aj]
   join:
-    usage: /<command> [category]
+    usage: /<command> [category|gui [category]]

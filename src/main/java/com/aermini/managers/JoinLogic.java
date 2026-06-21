@@ -56,10 +56,10 @@ public class JoinLogic {
             return;
         }
         sendTitle(player, "start");
-        executeQuickJoin(plugin, player, categoryName);
+        executeQuickJoin(plugin, player, categoryName, null);
     }
 
-    public static void executeQuickJoin(AerJoiner plugin, Player player, String categoryName) {
+    public static void executeQuickJoin(AerJoiner plugin, Player player, String categoryName, String arenaName) {
         CategoryData category = plugin.getServerManager().getCategory(categoryName);
         if (category == null) {
             sendTitle(player, "failed.no_group");
@@ -79,7 +79,17 @@ public class JoinLogic {
         }
 
         plugin.getTeleportLockManager().addTeleportLock(player, categoryName);
-        ServerData targetServer = selectServer(joinableServers, null);
+
+        ServerData targetServer;
+        if (arenaName != null) {
+            targetServer = joinableServers.stream()
+                    .filter(s -> arenaName.equals(s.getArenaName()))
+                    .max(Comparator.comparingInt(ServerData::getPlayerCount))
+                    .orElse(selectServer(joinableServers, null));
+        } else {
+            targetServer = selectServer(joinableServers, null);
+        }
+
         TeleportLockManager.TeleportLockState lockState = plugin.getTeleportLockManager().getTeleportState(player);
         lockState.setCurrentServer(targetServer.getName());
 

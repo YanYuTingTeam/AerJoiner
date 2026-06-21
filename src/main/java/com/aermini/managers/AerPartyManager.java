@@ -20,7 +20,7 @@ public class AerPartyManager {
         this.plugin = plugin;
     }
 
-    public boolean requestMatchCheck(org.bukkit.entity.Player player, String group) {
+    public boolean requestMatchCheck(org.bukkit.entity.Player player, String group, String arenaName) {
         if (player == null || !player.isOnline()) {
             return false;
         }
@@ -36,10 +36,10 @@ public class AerPartyManager {
                 PartyMatch match = pendingMatches.remove(player.getUniqueId());
                 // 超时直接匹配
                 if (match != null) {
-                    JoinLogic.executeQuickJoin(plugin, player, group);
+                    JoinLogic.executeQuickJoin(plugin, player, group, match.getArenaName());
                 }
             }, REQUEST_TIMEOUT / 50L).getTaskId();
-            pendingMatches.put(player.getUniqueId(), new PartyMatch(group, taskId));
+            pendingMatches.put(player.getUniqueId(), new PartyMatch(group, taskId, arenaName));
             return true;
         } catch (IOException e) {
             e.printStackTrace();
@@ -73,7 +73,7 @@ public class AerPartyManager {
                 PartyMatch match = pendingMatches.remove(player.getUniqueId());
                 if (match != null) {
                     Bukkit.getScheduler().cancelTask(match.getTaskId());
-                    JoinLogic.executeQuickJoin(plugin, player, match.getGroup());
+                    JoinLogic.executeQuickJoin(plugin, player, match.getGroup(), match.getArenaName());
                 }
             } else {
                 plugin.getLogger().warning("未知的 result -> " + result);
@@ -111,11 +111,14 @@ public class AerPartyManager {
     private static class PartyMatch {
         final String group;
         final int taskId;
-        PartyMatch(String group, int taskId) {
+        final String arenaName;
+        PartyMatch(String group, int taskId, String arenaName) {
             this.group = group;
             this.taskId = taskId;
+            this.arenaName = arenaName;
         }
         public String getGroup() {return group;}
         public int getTaskId() {return taskId;}
+        public String getArenaName() {return arenaName;}
     }
 }

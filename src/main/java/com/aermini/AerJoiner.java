@@ -2,12 +2,11 @@ package com.aermini;
 
 import com.aermini.commands.AerJoinerCommand;
 import com.aermini.commands.JoinCommand;
+import com.aermini.commands.JoinTabCompleter;
+import com.aermini.gui.JoinGUI;
+import com.aermini.gui.JoinGUIListener;
 import com.aermini.listeners.AerJoinerListener;
-import com.aermini.managers.AerPartyManager;
-import com.aermini.managers.CooldownManager;
-import com.aermini.managers.RedisManager;
-import com.aermini.managers.ServerManager;
-import com.aermini.managers.TeleportLockManager;
+import com.aermini.managers.*;
 import com.aermini.placeholder.AerJoinerExpansion;
 import org.bukkit.Bukkit;
 import org.bukkit.entity.Player;
@@ -23,6 +22,7 @@ public class AerJoiner extends JavaPlugin implements PluginMessageListener {
     private TeleportLockManager teleportLockManager;
     private AerPartyManager aerPartyManager;
     private RedisManager redisManager;
+    private JoinGUI joinGUI;
 
     @Override
     public void onEnable() {
@@ -52,9 +52,12 @@ public class AerJoiner extends JavaPlugin implements PluginMessageListener {
         this.cooldownManager = new CooldownManager(this);
         this.teleportLockManager = new TeleportLockManager(this);
         this.aerPartyManager = new AerPartyManager(this);
+        this.joinGUI = new JoinGUI(this);
         Bukkit.getPluginManager().registerEvents(new AerJoinerListener(this), this);
+        Bukkit.getPluginManager().registerEvents(new JoinGUIListener(this, joinGUI), this);
         Objects.requireNonNull(getCommand("aerjoiner")).setExecutor(new AerJoinerCommand(this));
         Objects.requireNonNull(getCommand("join")).setExecutor(new JoinCommand(this));
+        Objects.requireNonNull(getCommand("join")).setTabCompleter(new JoinTabCompleter(this));
 
         Bukkit.getScheduler().runTaskTimerAsynchronously(
                 this, serverManager::updateAllServers, 0,
@@ -80,8 +83,8 @@ public class AerJoiner extends JavaPlugin implements PluginMessageListener {
         }
     }
 
-    public void requestPartyCheck(Player player, String groupName) {
-        aerPartyManager.requestMatchCheck(player, groupName);
+    public void requestPartyCheck(Player player, String groupName, String arenaName) {
+        aerPartyManager.requestMatchCheck(player, groupName, arenaName);
     }
 
     public ServerManager getServerManager() { return serverManager; }
@@ -89,6 +92,10 @@ public class AerJoiner extends JavaPlugin implements PluginMessageListener {
     public TeleportLockManager getTeleportLockManager() { return teleportLockManager; }
     public AerPartyManager getAerPartyManager() { return aerPartyManager; }
     public RedisManager getRedisManager() { return redisManager; }
+
+    public JoinGUI getJoinGUI() {
+        return joinGUI;
+    }
 
     public static AerJoiner getInstance() { return instance; }
 }
