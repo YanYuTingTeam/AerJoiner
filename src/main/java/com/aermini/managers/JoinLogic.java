@@ -220,7 +220,7 @@ public class JoinLogic {
             return;
         }
         // 1. 异步发送 fire-and-forget 消息（不阻塞主线程）
-        final String fPlayerName = player.getName();
+        final String fPlayerName = player.getUniqueId().toString();
         final String fMode = targetGame.getRedisMode();
         final String fArenaName = targetGame.getArenaName();
         final String fChannel = category.getRedisChannel();
