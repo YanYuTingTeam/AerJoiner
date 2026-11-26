@@ -5,17 +5,21 @@ import com.connorlinfoot.titleapi.TitleAPI;
 import org.bukkit.Bukkit;
 import org.bukkit.ChatColor;
 import org.bukkit.entity.Player;
+import org.bukkit.metadata.FixedMetadataValue;
 
 import java.io.ByteArrayOutputStream;
 import java.io.DataOutputStream;
 import java.io.IOException;
 import java.util.Comparator;
 import java.util.List;
+import java.util.Objects;
 import java.util.Random;
+import java.util.UUID;
 import java.util.stream.Collectors;
 
 public class JoinLogic {
     private static final Random random = new Random();
+    private static final String PREPARE_METADATA = "aerjoiner.match.prepare";
 
     public static void sendToServer(Player player, String serverName) {
         ByteArrayOutputStream b = new ByteArrayOutputStream();
@@ -60,6 +64,10 @@ public class JoinLogic {
     }
 
     public static void executeQuickJoin(AerJoiner plugin, Player player, String categoryName, String arenaName) {
+        if (!player.isOnline() || Bukkit.getPlayer(player.getUniqueId()) != player
+                || plugin.getTeleportLockManager().isTeleporting(player)) {
+            return;
+        }
         CategoryData category = plugin.getServerManager().getCategory(categoryName);
         if (category == null) {
             sendTitle(player, "failed.no_group");
@@ -182,11 +190,10 @@ public class JoinLogic {
     // ==================== Redis 模式转服 ====================
 
     /**
-     * Redis fire-and-forget 模式:
+     * Redis 模式:
      * 1. 将 Redis 地址通过 ip-map 映射，再从 BungeeCord 配置查找对应服务器名
-     * 2. 向游戏服 Redis 频道发送加入消息 (fire-and-forget)
-     * 3. 用查到的 BungeeCord 服务器名转服
-     * 4. 失败时重试，达到上限后尝试下一个房间
+     * 2. BedwarsRel 确认登记直登目标后再 Connect, 其他频道保留原加入流程
+     * 3. 失败时重试，达到上限后尝试下一个房间
      */
     private static void startRedisTeleportProcess(final AerJoiner plugin, final Player player,
                                                   final String categoryName,
@@ -219,66 +226,90 @@ public class JoinLogic {
             sendTitle(player, "failed.no_room");
             return;
         }
-        // 1. 异步发送 fire-and-forget 消息（不阻塞主线程）
         final String fPlayerName = player.getUniqueId().toString();
         final String fMode = targetGame.getRedisMode();
         final String fArenaName = targetGame.getArenaName();
         final String fChannel = category.getRedisChannel();
-        Bukkit.getScheduler().runTaskAsynchronously(plugin, () -> {
-            redisManager.publishJoinMessage(fPlayerName, fMode, fArenaName, redisAddress, fChannel);
-        });
+        boolean prepare = "bedwars:match".equals(fChannel);
+        if (!prepare) {
+            Bukkit.getScheduler().runTaskAsynchronously(plugin, () ->
+                    redisManager.publishJoinMessage(fPlayerName, fMode, fArenaName, redisAddress, fChannel));
+        }
 
-        // 2. 用 BungeeCord 服务器名转服
-        sendToServer(player, bungeeServerName);
-        sendTitle(player, "success");
+        new Runnable() {
+            private int retryCount;
 
-        // 3. 重试计时器
-        final int[] retryCount = {0};
-        int taskId = Bukkit.getScheduler().runTaskTimer(plugin, new Runnable() {
             @Override
             public void run() {
-                if (!plugin.getTeleportLockManager().isTeleporting(player)) return;
-                if (!player.isOnline()) {
-                    // 玩家已离开大厅（成功转服或断线），停止重试
-                    plugin.getTeleportLockManager().removeTeleportLock(player);
+                if (!isCurrentMatch()) return;
+                if (!prepare) {
+                    sendToServer(player, bungeeServerName);
+                    if (retryCount == 0) sendTitle(player, "success");
+                    scheduleRetry();
                     return;
                 }
 
-                // 当前目标房间已变更（已切换到下一个房间），旧定时器退出
-                TeleportLockManager.TeleportLockState currentState = plugin.getTeleportLockManager().getTeleportState(player);
-                if (currentState == null || !currentState.getCurrentServer().equals(targetGame.getName())) return;
+                UUID requestId = UUID.randomUUID();
+                player.setMetadata(PREPARE_METADATA, new FixedMetadataValue(plugin, requestId.toString()));
+                redisManager.prepareJoin(fPlayerName, fMode, fArenaName, redisAddress, requestId, reply -> {
+                    if (!isCurrentMatch()) return;
+                    player.removeMetadata(PREPARE_METADATA, plugin);
+                    if ("joined".equals(reply)) {
+                        plugin.getTeleportLockManager().removeTeleportLock(player);
+                        sendTitle(player, "success");
+                        return;
+                    }
+                    if ("ready".equals(reply)) {
+                        sendToServer(player, bungeeServerName);
+                        sendTitle(player, "success");
+                    } else if (reply == null) {
+                        plugin.getLogger().fine("RedisManager > 匹配回执超时: " + fArenaName + " - " + redisAddress);
+                    }
+                    scheduleRetry();
+                });
+            }
 
-                retryCount[0]++;
-                if (retryCount[0] <= maxRetries) {
-                    sendToServer(player, bungeeServerName);
-                } else {
-                    // 当前房间失败，尝试下一个
+            private boolean isCurrentMatch() {
+                return player.isOnline() && Bukkit.getPlayer(player.getUniqueId()) == player
+                        && plugin.getTeleportLockManager().getTeleportState(player) == lockState;
+            }
+
+            private void scheduleRetry() {
+                int taskId = Bukkit.getScheduler().runTaskLater(plugin, () -> {
+                    if (!isCurrentMatch()) return;
+                    if (retryCount++ < maxRetries) {
+                        run();
+                        return;
+                    }
+
                     if (lockState.getServerAttemptCount() < maxServers) {
-                        lockState.incrementServerAttemptCount();
-                        lockState.resetRetryCount();
-
                         CategoryData currentCategory = plugin.getServerManager().getCategory(categoryName);
-                        List<ServerData> joinableServers =
-                                plugin.getServerManager().getServersInCategory(categoryName).stream()
-                                        .filter(server -> isRedisServerJoinable(server, currentCategory))
-                                        .collect(Collectors.toList());
+                        List<ServerData> joinableServers = plugin.getServerManager().getServersInCategory(categoryName).stream()
+                                .filter(server -> "redis".equals(currentCategory.getMethod())
+                                        && isRedisServerJoinable(server, currentCategory))
+                                .filter(server -> !Objects.equals(server.getArenaName(), fArenaName)
+                                        || !Objects.equals(server.getServerAddress(), redisAddress)
+                                        || !Objects.equals(server.getRedisMode(), fMode))
+                                .collect(Collectors.toList());
 
-                        ServerData nextGame = selectServer(joinableServers, targetGame.getArenaName());
+                        ServerData nextGame = selectServer(joinableServers, null);
                         if (nextGame != null) {
+                            lockState.incrementServerAttemptCount();
                             lockState.setCurrentServer(nextGame.getArenaName());
                             startRedisTeleportProcess(plugin, player, categoryName, nextGame, currentCategory);
-                        } else {
-                            plugin.getTeleportLockManager().removeTeleportLock(player);
-                            sendTitle(player, "failed.no_room");
+                            return;
                         }
-                    } else {
-                        plugin.getTeleportLockManager().removeTeleportLock(player);
-                        sendTitle(player, "failed.no_room");
                     }
-                }
+                    plugin.getTeleportLockManager().removeTeleportLock(player);
+                    sendTitle(player, "failed.no_room");
+                }, checkInterval * 20L).getTaskId();
+                lockState.setTaskId(taskId);
             }
-        }, checkInterval * 20L, checkInterval * 20L).getTaskId();
-        lockState.setTaskId(taskId);
+        }.run();
+    }
+
+    public static void clearPrepare(Player player, AerJoiner plugin) {
+        player.removeMetadata(PREPARE_METADATA, plugin);
     }
 
     public static void sendTitle(Player player, String configPath) {

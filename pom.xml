@@ -7,7 +7,12 @@
     <groupId>com.aermini</groupId>
     <artifactId>AerJoiner</artifactId>
     <version>17.0.0</version>
-    <packaging>jar</packaging>
+    <packaging>pom</packaging>
+
+    <modules>
+        <module>core</module>
+        <module>handler</module>
+    </modules>
 
     <properties>
         <project.build.sourceEncoding>UTF-8</project.build.sourceEncoding>
@@ -15,6 +20,7 @@
         <maven.compiler.source>1.8</maven.compiler.source>
         <maven.compiler.target>1.8</maven.compiler.target>
         <maven.compiler.encoding>UTF-8</maven.compiler.encoding>
+        <shared.libs>${project.basedir}/libs</shared.libs>
     </properties>
 
     <repositories>
@@ -24,6 +30,7 @@
         </repository>
     </repositories>
 
+    <dependencyManagement>
     <dependencies>
         <dependency>
             <groupId>org.spigotmc</groupId>
@@ -48,14 +55,14 @@
             <artifactId>TitleAPI</artifactId>
             <version>1.5.3</version>
             <scope>system</scope>
-            <systemPath>${project.basedir}/libs/TitleAPI-1.5.3.jar</systemPath>
+            <systemPath>${shared.libs}/TitleAPI-1.5.3.jar</systemPath>
         </dependency>
         <dependency>
             <groupId>me.clip</groupId>
             <artifactId>placeholderapi</artifactId>
             <version>2.11.6</version>
             <scope>system</scope>
-            <systemPath>${project.basedir}/libs/PlaceholderAPI-2.11.6.jar</systemPath>
+            <systemPath>${shared.libs}/PlaceholderAPI-2.11.6.jar</systemPath>
         </dependency>
 
         <dependency>
@@ -73,9 +80,23 @@
                 </exclusion>
             </exclusions>
         </dependency>
+        <dependency>
+            <groupId>com.google.code.gson</groupId>
+            <artifactId>gson</artifactId>
+            <version>2.2.4</version>
+            <scope>provided</scope>
+        </dependency>
+        <dependency>
+            <groupId>junit</groupId>
+            <artifactId>junit</artifactId>
+            <version>4.13.2</version>
+            <scope>test</scope>
+        </dependency>
     </dependencies>
+    </dependencyManagement>
 
     <build>
+        <pluginManagement>
         <plugins>
             <plugin>
                 <groupId>org.apache.maven.plugins</groupId>
@@ -89,6 +110,7 @@
                         </goals>
                         <configuration>
                             <createDependencyReducedPom>false</createDependencyReducedPom>
+                            <outputFile>${project.basedir}/../plugin/target/${project.build.finalName}.jar</outputFile>
                             <relocations>
                                 <relocation>
                                     <pattern>redis.clients.jedis</pattern>
@@ -104,5 +126,6 @@
                 </executions>
             </plugin>
         </plugins>
+        </pluginManagement>
     </build>
 </project>
