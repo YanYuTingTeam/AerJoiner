@@ -1,6 +1,7 @@
 package com.aermini.listeners;
 
 import com.aermini.AerJoiner;
+import com.aermini.managers.JoinLogic;
 import org.bukkit.entity.Player;
 import org.bukkit.event.EventHandler;
 import org.bukkit.event.EventPriority;
@@ -28,6 +29,7 @@ public class AerJoinerListener implements Listener {
     }
 
     private void cleanupPlayerState(Player player) {
+        JoinLogic.clearPrepare(player, plugin);
         if (plugin.getTeleportLockManager().isTeleporting(player)) {
             plugin.getTeleportLockManager().removeTeleportLock(player);
         }

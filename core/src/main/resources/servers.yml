@@ -31,9 +31,8 @@
 #
 # ======= Redis 模式说明 =======
 # AerJoiner 定时 SCAN Redis 中匹配 key-prefix 的房间，根据 playerCount/maxPlayers/state 筛选可加入的房间
-# 加入时向 channel 发送 fire-and-forget 消息: playerName,mode,arenaName,ip:port
-# 然后直接用 ip:port 作为 BungeeCord 服务器名进行转服
-# （BungeeCord config.yml 中需配置以 ip:port 为名的服务器）
+# bedwars:match 使用直登确认, 收到 BedwarsRel 回执后才转服, 需同时升级目标端插件
+# 其他频道继续使用旧四段消息; BungeeCord 服务器名由配置中的地址解析
 
 group:
   bw:

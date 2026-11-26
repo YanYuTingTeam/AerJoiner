@@ -1,28 +1,32 @@
 package com.aermini.managers;
 
 import com.aermini.AerJoiner;
+import org.bukkit.Bukkit;
 import org.bukkit.configuration.ConfigurationSection;
+import redis.clients.jedis.ConnectionPoolConfig;
 import redis.clients.jedis.DefaultJedisClientConfig;
 import redis.clients.jedis.RedisClient;
 import redis.clients.jedis.params.ScanParams;
+import redis.clients.jedis.params.SetParams;
 import redis.clients.jedis.resps.ScanResult;
 
+import java.time.Duration;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.Map;
+import java.util.UUID;
+import java.util.concurrent.TimeUnit;
+import java.util.function.Consumer;
 import java.util.regex.Pattern;
 
 /**
- * 精简版 RedisManager — 只做两件事:
- * 1. SCAN: 扫描 Redis 中的游戏房间 key（定时调用）
- * 2. PUBLISH: 发送 fire-and-forget 加入消息到游戏服
- *
- * 无 Pub/Sub 订阅，无请求-响应，无跨集群。
- * 对应 BedwarsRel (朋友版) 的 Redis 协议:
- *   Key 格式:   bedwars:{mode}:{ip}:{port}:{arenaName}
- *   消息格式:   playerName,mode,arenaName,ip:port  →  频道 bedwars:match
+ * 扫描 Redis 游戏房间, 保留旧频道的四段加入消息.
+ * BedwarsRel 直登用 bedwars:match:prepare 和独立的短期回执键, 无需订阅线程.
  */
 public class RedisManager {
+
+    private static final String PREPARE_CHANNEL = "bedwars:match:prepare";
+    private static final long PREPARE_TIMEOUT_MS = 2000L;
 
     private final RedisClient jedis;
     private final AerJoiner plugin;
@@ -43,9 +47,12 @@ public class RedisManager {
             configBuilder.password(password);
         }
 
+        ConnectionPoolConfig poolConfig = new ConnectionPoolConfig();
+        poolConfig.setMaxWait(Duration.ofMillis(PREPARE_TIMEOUT_MS));
         this.jedis = RedisClient.builder()
                 .hostAndPort(host, port)
                 .clientConfig(configBuilder.build())
+                .poolConfig(poolConfig)
                 .build();
 
         plugin.getLogger().info("RedisManager > 已初始化 - host: " + host + ", port: " + port);
@@ -72,6 +79,52 @@ public class RedisManager {
         } catch (Exception e) {
             plugin.getLogger().warning("RedisManager > [发送消息] 发送失败: " + e.getMessage());
         }
+    }
+
+    public void prepareJoin(String playerName, String mode, String arenaName,
+                            String serverAddress, UUID requestId, Consumer<String> callback) {
+        String key = PREPARE_CHANNEL + ":" + requestId;
+        String message = playerName + "," + mode + "," + arenaName + "," + serverAddress + "," + requestId;
+        long deadline = System.nanoTime() + TimeUnit.MILLISECONDS.toNanos(PREPARE_TIMEOUT_MS);
+        Bukkit.getScheduler().runTaskAsynchronously(plugin, () -> {
+            long ttl = TimeUnit.NANOSECONDS.toMillis(deadline - System.nanoTime());
+            if (ttl > 0) {
+                try {
+                    jedis.set(key, "waiting", SetParams.setParams().px(ttl));
+                    if (System.nanoTime() - deadline < 0) {
+                        jedis.publish(PREPARE_CHANNEL, message);
+                        checkPrepareReply(key, deadline, callback);
+                        return;
+                    }
+                } catch (Exception e) {
+                    if (plugin.isEnabled()) plugin.getLogger().warning("RedisManager > 发送匹配请求失败: " + e.getMessage());
+                }
+            }
+            finishPrepare(null, deadline, callback);
+        });
+    }
+
+    private void checkPrepareReply(String key, long deadline, Consumer<String> callback) {
+        String reply = null;
+        if (System.nanoTime() - deadline < 0) {
+            try {
+                reply = jedis.get(key);
+                if ("waiting".equals(reply) && System.nanoTime() - deadline < 0) {
+                    Bukkit.getScheduler().runTaskLaterAsynchronously(plugin,
+                            () -> checkPrepareReply(key, deadline, callback), 2L);
+                    return;
+                }
+            } catch (Exception e) {
+                if (plugin.isEnabled()) plugin.getLogger().warning("RedisManager > 读取匹配回执失败: " + e.getMessage());
+            }
+        }
+        finishPrepare(reply, deadline, callback);
+    }
+
+    private void finishPrepare(String reply, long deadline, Consumer<String> callback) {
+        if (!plugin.isEnabled()) return;
+        Bukkit.getScheduler().runTask(plugin, () ->
+                callback.accept(System.nanoTime() - deadline < 0 ? reply : null));
     }
 
     // ==================== SCAN: 扫描可用房间 ====================
